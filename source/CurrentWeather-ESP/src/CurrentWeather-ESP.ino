@@ -1,5 +1,8 @@
+// Weather acquired from openweathermap.org
+// Current weather API examples: https://openweathermap.org/current
 
 // WiFiManager
+// https://github.com/tzapu/WiFiManager/tree/master/examples/AutoConnectWithFSParameters
 
 #include <FS.h>
 #include <math.h>
@@ -11,7 +14,7 @@
 // The version of WiFiManger used in this project requires ArduinoJason version 5
 #include <ArduinoJson.h> //https://github.com/bblanchon/ArduinoJson
 
-const char accessPointName[] = "Weather Station";
+const char accessPointName[] = "Current Weather";
 
 // User pass parameters set during WiFi setup/login via captured portal.
 char zip[6] = "22553";
@@ -19,43 +22,38 @@ char key[34] = "8d04433fa71622e1e2b9a8467f6b81e1";
 
 WiFiClient client;
 
+
 void setup()
-{
+{  
   Serial.begin(115200);
   Serial1.begin(115200);
 
   Serial.println();
 
-
   BeginSpiffs();
-
-  // Will pass upon success; reset upon fail.
-  OnDemandPortal();
+  
+  ConnectToWifi();
  
   Serial.print("Local IP: ");
   Serial.println(WiFi.localIP());
 }
 
+
 void loop()
-{
-
-  delay(2000);
-
-  // OnDemandPortal();
-
+{  
   Serial.print("WiFi status: ");
   Serial.println(WiFi.status());
   Serial.print("WiFi RSSI: ");
   Serial.println(WiFi.RSSI());
 
-  if (GetWeather())
-  {
-  }
+  GetWeather();
+  
+  delay(2000);  
 }
+
 
 bool GetWeather()
 {
-
   String zipParam(zip);
   String keyParam(key);
 
@@ -136,10 +134,10 @@ bool GetWeather()
   return false;
 }
 
+
  // Read configuration from FS json
 void BeginSpiffs()
-{
- 
+{ 
   Serial.println("Mounting FS...");
 
   if (SPIFFS.begin())
@@ -187,7 +185,6 @@ void BeginSpiffs()
 
 void saveConfigCallback()
 {
-
   Serial.println("Saving parameters...");
     
     DynamicJsonBuffer jsonBuffer;
@@ -207,9 +204,40 @@ void saveConfigCallback()
 }
 
 
+
+void ConnectToWifi()
+{
+Serial.println("Attempting to connect to WiFi...");
+
+  WiFiManager wifiManager;
+
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+
+  WiFiManagerParameter custom_zip("zip", "Zip Code", zip, 6);
+  WiFiManagerParameter custom_key("key", "API Key", key, 33);
+
+  wifiManager.addParameter(&custom_zip);
+  wifiManager.addParameter(&custom_key);
+
+  if (!wifiManager.autoConnect("accessPointName")) 
+  {
+    Serial.println("Failed to connect to WiFi and hit timeout.");
+    delay(1000);
+    //reset and try again, or maybe put it to deep sleep
+    ESP.reset();
+    delay(5000);
+  }
+
+  strcpy(zip, custom_zip.getValue());
+  strcpy(key, custom_key.getValue());
+
+  Serial.println("Connected to WiFi...");
+}
+
+
+// Blocks
 void OnDemandPortal()
 {
-
   Serial.println("Starting On Demand Portal...");
 
   WiFiManager wifiManager;
