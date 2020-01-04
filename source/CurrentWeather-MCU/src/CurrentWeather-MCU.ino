@@ -2,12 +2,6 @@
 #include <AccelStepper.h>
 #include <Adafruit_NeoPixel.h>
 
-/*
-// Calculate steps per inch.
-(steps-pre-revolution * microsteps) /  (belt-pitch(inches) * pulley-teeth) = steps per inch
-(200 * 16) / (0.0787402 * 36) = 1128.888
-*/
-
 #define PIN_LED_PRESSURE_POINTER 12
 #define PIN_LED_GAUGES 11
 #define PIN_LED_TEMPERATURE_POINTER 10
@@ -28,19 +22,30 @@
 
 #define PIN_SWITCH_MODE A0
 
-#define STEPPER_STEPS_PER_INCH 1129
+/*
+// Calculate steps per inch.
+(steps-pre-revolution * microsteps) /  (belt-pitch(inches) * pulley-teeth) = steps per inch
+(200 * 16) / (0.0787402 * 36) = 1128.888
+*/
+
 #define STEPPER_ACCELERATION 100000 // Instantious full speed.
 #define STEPPER_MAX_SPEED 2000
 #define STEPPER_SPEED 2000
-#define STEPPER_MAX_POSITION STEPPER_STEPS_PER_INCH * 10 // TEMP
+#define STEPPER_STEPS_PER_INCH 1128.888
+#define STEPPER_MAX_POSITION (STEPPER_STEPS_PER_INCH * 13.161)
+#define STEPPER_INCHES_PER_TEMPERATURE_UNIT 0.107 // Distance between ticks on the gauge display
+#define STEPPER_INCHES_PER_PRESSURE_UNIT 0.130    // Distance between ticks on the gauge display
+#define STEPPER_INCHES_PER_HUMITIY_UNIT 0.130     // Distance between ticks on the gauge display
 
-#define STEPPER_TEMPERATURE_STEPS_FROM_LIMIT_AS_HOME 200
-#define STEPPER_PRESSURE_STEPS_FROM_LIMIT_AS_HOME 200
-#define STEPPER_HUMIDITY_STEPS_FROM_LIMIT_AS_HOME 200
+// Distance from limit switch to zero position on the weather data scale (manualy calibrated through observation).
+#define STEPPER_TEMPERATURE_STEPS_FROM_LIMIT_AS_HOME 321
+#define STEPPER_PRESSURE_STEPS_FROM_LIMIT_AS_HOME 118
+#define STEPPER_HUMIDITY_STEPS_FROM_LIMIT_AS_HOME 138
 
 #define SWITCH_LIMIT_ACTIVATED 0
 
 #define LED_BRIGHTNESS 127
+#define LED_POINTER_BRIGHTNESS 255
 
 #define MODE_OUTSIDE 0
 #define MODE_INSIDE 1
@@ -57,11 +62,16 @@ int uartTimeoutCount = 0;
 int oldMillis = 0;
 int uartDataStatus = 0;
 
-int weatherId;
-int tempurature;
-int humidity;
-int pressure;
-int sum;
+struct Weather
+{
+  int weatherId;
+  int temperature;
+  int humidity;
+  int pressure;
+  int sum;
+};
+
+Weather weather;
 
 bool mode;
 
@@ -75,7 +85,6 @@ Adafruit_NeoPixel stripHumidity = Adafruit_NeoPixel(1, PIN_LED_HUMIDITY_POINTER,
 Adafruit_NeoPixel stripGauges = Adafruit_NeoPixel(80, PIN_LED_GAUGES, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel stripText = Adafruit_NeoPixel(43, PIN_LED_TEXT, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel stripConnectionStatus = Adafruit_NeoPixel(1, PIN_LED_CONNECTION_STATUS, NEO_GRB + NEO_KHZ800);
-
 
 void setup()
 {
@@ -102,13 +111,13 @@ void setup()
   stepperHumidity.setSpeed(STEPPER_SPEED);
 
   // Initialize WS2812b LED .
-  stripTemperature.setBrightness(LED_BRIGHTNESS);
+  stripTemperature.setBrightness(LED_POINTER_BRIGHTNESS);
   stripTemperature.begin();
   stripTemperature.show();
-  stripPressure.setBrightness(LED_BRIGHTNESS);
+  stripPressure.setBrightness(LED_POINTER_BRIGHTNESS);
   stripPressure.begin();
   stripPressure.show();
-  stripHumidity.setBrightness(LED_BRIGHTNESS);
+  stripHumidity.setBrightness(LED_POINTER_BRIGHTNESS);
   stripHumidity.begin();
   stripHumidity.show();
   stripGauges.setBrightness(LED_BRIGHTNESS);
@@ -121,7 +130,6 @@ void setup()
   stripConnectionStatus.begin();
   stripConnectionStatus.show();
 
-
   mode = digitalRead(PIN_SWITCH_MODE);
 
   LedStartupPattern();
@@ -131,10 +139,9 @@ void setup()
   SetTextColors();
 
   Serial.begin(115200);
-
-  
 }
 
+// Main execution loop.
 void loop()
 {
 
@@ -144,38 +151,83 @@ void loop()
 
   CheckModeSwitch();
 
-  UpdateStation();
+  UpdatePointerPositions();
+
+  UpdatePointerColors();
 
   CheckLimitSwitches();
 
   UpdateStepperMotors();
- 
 }
-
 
 void UpdateStepperMotors()
 {
-   // Step motors (if needed) (does not use acceleration).
+  // Step motors (if needed) (does not use acceleration).
   stepperTemperature.run();
   stepperPressure.run();
   stepperHumidity.run();
 }
 
-
 // Update LEDs and steppers with weather information.
-void UpdateStation()
+void UpdatePointerPositions()
 {
 
-  if (mode == MODE_OUTSIDE)
-  {
-  }
+ 
 
-  // Convert tempurature into position.
-  int positionTemperature = tempurature;
+weather.temperature = 95;
+weather.pressure = 95;
+weather.humidity = 95;
+
+
+  // Update pointer positions.
+
+  // Convert temperature to position (add 10 degrees offset to scale temperature out of negative values).
+  float positionTemperature = (weather.temperature + 10) * STEPPER_STEPS_PER_INCH * STEPPER_INCHES_PER_TEMPERATURE_UNIT;
   if (positionTemperature > STEPPER_MAX_POSITION)
+  {
     positionTemperature = STEPPER_MAX_POSITION;
+  }
+  stepperTemperature.moveTo((long)positionTemperature);
 
-  stepperTemperature.moveTo(positionTemperature);
+  // Convert pressure to position.
+  float positionPressure = (weather.pressure) * STEPPER_STEPS_PER_INCH * STEPPER_INCHES_PER_PRESSURE_UNIT;
+  if (positionPressure > STEPPER_MAX_POSITION)
+  {
+    positionPressure = STEPPER_MAX_POSITION;
+  }
+  stepperPressure.moveTo((long)positionPressure);
+
+  // Convert humidity to position.
+  float positionHumdity = (weather.humidity) * STEPPER_STEPS_PER_INCH * STEPPER_INCHES_PER_HUMITIY_UNIT;
+  if (positionHumdity > STEPPER_MAX_POSITION)
+  {
+    positionHumdity = STEPPER_MAX_POSITION;
+  }
+  stepperHumidity.moveTo((long)positionHumdity);
+
+  
+}
+
+// Update pointers colors.
+void UpdatePointerColors()
+{  
+   if (mode == MODE_OUTSIDE)
+  {
+  }  
+
+  float p = stepperTemperature.currentPosition() / STEPPER_MAX_POSITION * 100;
+
+  int m = map(p, 0, 100, 0 , 170);
+
+  stripTemperature.setPixelColor(0, Wheel(m));
+
+
+  //stripTemperature.setPixelColor(0, 255, 0, 0);
+  stripPressure.setPixelColor(0, 0, 255, 0);
+  stripHumidity.setPixelColor(0, 0, 0, 255);
+  stripTemperature.show();
+  stripPressure.show();
+  stripHumidity.show();
 }
 
 // Check for uart data ready to read.
@@ -205,32 +257,22 @@ void CheckUartForData()
     {
       uartReadCount = 0;
 
-      int weatherIdTemp;
-      int tempuratureTemp;
-      int humidityTemp;
-      int pressureTemp;
-      int sum;
-
-      weatherIdTemp = uartReadData[0] + (uartReadData[1] << 8);
-      tempuratureTemp = uartReadData[2] + (uartReadData[3] << 8);
-      humidityTemp = uartReadData[4] + (uartReadData[5] << 8);
-      pressureTemp = uartReadData[6] + (uartReadData[7] << 8);
-      sum = uartReadData[8] + (uartReadData[9] << 8);
-
-
+      Weather weatherTemp;
+      weatherTemp.weatherId = uartReadData[0] + (uartReadData[1] << 8);
+      weatherTemp.temperature = uartReadData[2] + (uartReadData[3] << 8);
+      weatherTemp.humidity = uartReadData[4] + (uartReadData[5] << 8);
+      weatherTemp.pressure = uartReadData[6] + (uartReadData[7] << 8);
+      weatherTemp.sum = uartReadData[8] + (uartReadData[9] << 8);
 
       // Check checksum.
-      if (sum != weatherIdTemp + tempuratureTemp + humidityTemp + pressureTemp)
+      if (weatherTemp.sum != weatherTemp.weatherId + weatherTemp.temperature + weatherTemp.humidity + weatherTemp.pressure)
       {
         return;
       }
 
       uartDataStatus = UART_STATUS_CONNECTED;
 
-      weatherId = weatherIdTemp;
-      tempurature = tempuratureTemp;
-      humidity = humidityTemp;
-      pressure = pressureTemp;
+      weather = weatherTemp;
     }
   }
 }
@@ -240,7 +282,7 @@ void CheckModeSwitch()
 {
   if (digitalRead(PIN_SWITCH_MODE) != mode)
   {
-    mode = digitalRead(PIN_SWITCH_MODE);   
+    mode = digitalRead(PIN_SWITCH_MODE);
     SetInsideOutsideLedColors();
   }
 }
@@ -357,14 +399,13 @@ void HomeSteppers()
   }
 }
 
-
 void SetConnectionStatusLED()
 {
-  if (uartDataStatus == UART_STATUS_CONNECTED) 
+  if (uartDataStatus == UART_STATUS_CONNECTED)
   {
     stripConnectionStatus.setPixelColor(0, stripConnectionStatus.Color(255, 0, 0));
   }
-  else if (uartDataStatus == UART_STATUS_DISCONNECTED) 
+  else if (uartDataStatus == UART_STATUS_DISCONNECTED)
   {
     stripConnectionStatus.setPixelColor(0, stripConnectionStatus.Color(0, 255, 0));
   }
@@ -372,14 +413,13 @@ void SetConnectionStatusLED()
   stripConnectionStatus.show();
 }
 
-
 void SetTextColors()
 {
 
   // Text pattern LED order (43 total)
   // 3x humidity
   // 3x pressure
-  // 3x tempurature
+  // 3x e
   // 12x cloud cover
   // 5x inside
   // 5x outside
@@ -397,7 +437,7 @@ void SetTextColors()
     stripText.setPixelColor(i, stripText.Color(0, 255, 0));
   }
 
-  // tempurature
+  // e
   for (int i = 6; i < 9; i++)
   {
     stripText.setPixelColor(i, stripText.Color(255, 0, 0));
@@ -478,8 +518,6 @@ void LedStartupPattern()
     stripGauges.show();
   }
 }
-
-
 
 // Input a value 0 to 255 to get a color value (of a pseudo-rainbow).
 // The colours are a transition r - g - b - back to r.
