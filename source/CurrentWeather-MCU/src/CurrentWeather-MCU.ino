@@ -1,3 +1,14 @@
+/*
+
+Current Weather
+
+Display current outside or outside weather via motorized gauges and RGB LEDs.
+
+
+
+
+*/
+
 #include <Arduino.h>
 #include <Wire.h>
 #include <AccelStepper.h>
@@ -36,17 +47,12 @@ long const STEPPER_MAX_SPEED = 20000;
 long const STEPPER_SPEED = 4000;
 float const STEPPER_STEPS_PER_INCH = 1128.888;
 
-
-
-
 float const STEPPER_INCHES_PER_TEMPERATURE_UNIT = 0.107; // Distance between ticks on the gauge display
 float const STEPPER_INCHES_PER_PRESSURE_UNIT = 0.130;    // Distance between ticks on the gauge display
 float const STEPPER_INCHES_PER_HUMITIY_UNIT = 0.130;     // Distance between ticks on the gauge display
 
-// TODO Unique offsets 
+// TODO Unique offsets
 float const STEPPER_MAX_POSITION = STEPPER_STEPS_PER_INCH * 13.161 - STEPPER_INCHES_PER_PRESSURE_UNIT;
-
-
 
 // Distance from limit switch to zero position on the weather data scale (manualy calibrated through observation).
 #define STEPPER_TEMPERATURE_STEPS_FROM_LIMIT_AS_HOME 321
@@ -87,6 +93,7 @@ struct Weather
 };
 
 Weather weather;
+int const insideWeatherDataUpdateRate = 25; // ms
 
 AccelStepper stepperTemperature(AccelStepper::DRIVER, PIN_DRIVER_3_STEP, PIN_DRIVER_3_DIR);
 AccelStepper stepperPressure(AccelStepper::DRIVER, PIN_DRIVER_2_STEP, PIN_DRIVER_2_DIR);
@@ -166,32 +173,23 @@ void setup()
   mode = digitalRead(PIN_SWITCH_MODE);
 
   LedStartupPattern();
-
-   HomeSteppers();
-
+  HomeSteppers();
   SetTextColors();
-
   SetGaugeColors();
 }
 
 // Main execution loop.
 void loop()
 {
-
   CheckUartForData();
-
   SetStatusLED();
-
   CheckModeSwitch();
-
   UpdatePointerPositions();
-
   UpdatePointerColors();
-
   CheckLimitSwitches();
-
   UpdateStepperMotors();
 }
+
 
 void UpdateStepperMotors()
 {
@@ -201,10 +199,10 @@ void UpdateStepperMotors()
   stepperHumidity.run();
 }
 
+
 // Update LEDs and steppers with weather information.
 void UpdatePointerPositions()
 {
-
   float temperatureData;
   float pressureData;
   float humidityData;
@@ -212,30 +210,21 @@ void UpdatePointerPositions()
   // Select weather data source: inside or outside (sensor or ESP via UART)
   if (mode == MODE_INSIDE)
   {
-      static long oldMillis = 0;
+    // Add delay to gather data due to execution overhead (slows stepper speeds without delay).
+    if (millis() > oldMillis + insideWeatherDataUpdateRate)
+    {
+      oldMillis = millis();
 
-      if (oldMillis < millis() + 250)
-      {
-        oldMillis = millis();
+      // Acquire data from BME280 sensor (per Adafruit example sketch).
+      sensors_event_t temp_event, pressure_event, humidity_event;
+      bme_temp->getEvent(&temp_event);
+      bme_pressure->getEvent(&pressure_event);
+      bme_humidity->getEvent(&humidity_event);
 
-          temperatureData = 20;
-    pressureData = 980;
-    humidityData = 35;
-        
-        /*
-        // Acquire data from BME280 sensor (per Adafruit example sketch).
-            sensors_event_t temp_event, pressure_event, humidity_event;
-            bme_temp->getEvent(&temp_event);
-            bme_pressure->getEvent(&pressure_event);
-            bme_humidity->getEvent(&humidity_event);
-           
-            temperatureData = (temp_event.temperature * 9 / 5) + 32; // Convert C to F
-          pressureData = pressure_event.pressure;
-            humidityData = humidity_event.relative_humidity;
-            */
-      }
-
-    
+      temperatureData = round((temp_event.temperature * 9 / 5) + 32); // Convert C to F
+      pressureData = round(pressure_event.pressure);
+      humidityData = round(humidity_event.relative_humidity);
+    }
   }
   else if (mode == MODE_OUTSIDE)
   {
@@ -244,13 +233,10 @@ void UpdatePointerPositions()
     pressureData = weather.pressure;
     humidityData = weather.humidity;
 
-  temperatureData = 10;
+    temperatureData = 10;
     pressureData = 960;
     humidityData = 10;
-
   }
-
-  // Update pointer positions.
 
   // Convert temperature to position (add 10 degrees offset to scale temperature out of negative values).
   float positionTemperature = (temperatureData + 10) * STEPPER_STEPS_PER_INCH * STEPPER_INCHES_PER_TEMPERATURE_UNIT;
@@ -269,7 +255,7 @@ void UpdatePointerPositions()
   stepperPressure.moveTo((long)positionPressure);
 
   // Convert humidity to position.
-  float positionHumdity = (humidityData) * STEPPER_STEPS_PER_INCH * STEPPER_INCHES_PER_HUMITIY_UNIT;
+  float positionHumdity = (humidityData)*STEPPER_STEPS_PER_INCH * STEPPER_INCHES_PER_HUMITIY_UNIT;
   if (positionHumdity > STEPPER_MAX_POSITION)
   {
     positionHumdity = STEPPER_MAX_POSITION;
@@ -280,7 +266,6 @@ void UpdatePointerPositions()
 // Update pointers colors.
 void UpdatePointerColors()
 {
-  
   // Scale position to desired color wheel colors.
   float positionPercentageTemperature = stepperTemperature.currentPosition() / STEPPER_MAX_POSITION * 100;
   int mappedPositionToColorWheelTemperature = map(positionPercentageTemperature, 0, 100, 170, 0);
@@ -303,7 +288,6 @@ void UpdatePointerColors()
 // Manual timeout taking into account data is expected every 2000ms.
 void CheckUartForData()
 {
-
   // Check for timeout.
   if (millis() > (oldMillis + UART_TIMEOUT))
   {
@@ -378,9 +362,9 @@ void CheckLimitSwitches()
   }
 }
 
-// Home steppers into known position using limit switches in two phases.
+// Home steppers into known position using limit switches.
 // Phase 1: all three steppers contact limit switches.
-// Phase 2: all three steppers back away from limit switches.
+// Phase 2: all three steppers back away from limit switches into calibrated positions.
 void HomeSteppers()
 {
   bool stepperTemperatureHomeFlag = false;
@@ -472,11 +456,10 @@ void SetStatusLED()
 
 void SetTextColors()
 {
-
   // Text pattern LED order (43 total)
   // 3x humidity
   // 3x pressure
-  // 3x e
+  // 3x temperature
   // 12x cloud cover
   // 5x inside
   // 5x outside
@@ -494,7 +477,7 @@ void SetTextColors()
     stripText.setPixelColor(i, stripText.Color(0, 255, 0));
   }
 
-  // e
+  // temperature
   for (int i = 6; i < 9; i++)
   {
     stripText.setPixelColor(i, stripText.Color(255, 0, 0));
@@ -570,14 +553,9 @@ void LedStartupPattern()
   {
     if (i < LED_NUM_LEDS_PER_GAUGE)
     {
-      // stripGauges.setPixelColor(i + 0, stripGauges.Color(0, 0, 255));
-      // stripGauges.setPixelColor(LED_NUM_LEDS_PER_GAUGE * 2 - i, stripGauges.Color(0, 255, 0));
-      // stripGauges.setPixelColor(i + LED_NUM_LEDS_PER_GAUGE * 2, stripGauges.Color(255, 0, 0));
-
       stripGauges.setPixelColor(i + 0, Wheel(256 / 43 * i));
       stripGauges.setPixelColor(LED_NUM_LEDS_PER_GAUGE * 2 - i, Wheel(256 / 43 * i));
       stripGauges.setPixelColor(i + LED_NUM_LEDS_PER_GAUGE * 2, Wheel(256 / 43 * i));
-
       stripGauges.show();
     }
 
