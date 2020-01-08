@@ -80,7 +80,7 @@ bool mode;
 byte uartReadData[10];
 int uartReadCount = 0;
 int uartTimeoutCount = 0;
-
+int oldMillis = 0;
 int uartDataStatus = UART_STATUS_DISCONNECTED;
 
 struct Weather
@@ -201,7 +201,7 @@ void UpdateStepperMotors()
 // Update LEDs and steppers with weather information.
 void UpdatePointerPositions()
 {
-  static int oldMillis = 0;  
+  static long oldMillis = 0;
   float temperatureData;
   float pressureData;
   float humidityData;
@@ -214,10 +214,26 @@ void UpdatePointerPositions()
     {
       oldMillis = millis();
 
-      // Acquire data from BME280 sensor.
-      temperatureData = round((bme.readTemperature() * 9 / 5) + 32); // Convert C to F
-      pressureData = round(bme.readPressure());
-      humidityData = round(bme.readHumidity());
+      // Acquire data from BME280 sensor (per Adafruit example sketch).
+      sensors_event_t temp_event, pressure_event, humidity_event;
+      bme_temp->getEvent(&temp_event);
+      bme_pressure->getEvent(&pressure_event);
+      bme_humidity->getEvent(&humidity_event);
+
+      temperatureData = round((temp_event.temperature * 9 / 5) + 32); // Convert C to F
+      pressureData = round(pressure_event.pressure);
+      humidityData = round(humidity_event.relative_humidity);
+
+
+ // Acquire data from BME280 sensor.
+     // temperatureData = round((bme.readTemperature() * 9 / 5) + 32); // Convert C to F
+     // pressureData = round(bme.readPressure());
+    //  humidityData = round(bme.readHumidity());
+
+
+
+
+
     }
   }
   else if (mode == MODE_OUTSIDE)
@@ -282,8 +298,7 @@ void UpdatePointerColors()
 // Manual timeout taking into account data is expected every 2000ms.
 void CheckUartForData()
 {
-  static int oldMillis = 0;
-
+  static long oldMillis = 0;
   // Check for timeout.
   if (millis() > (oldMillis + UART_TIMEOUT))
   {
