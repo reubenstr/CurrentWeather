@@ -1,7 +1,7 @@
 /*
-	Current Weather
+  Current Weather
 
-	Motorized temperature, pressure, and humidity gauges with
+  Motorized temperature, pressure, and humidity gauges with
   WS2812s backlights mounted on a wall hanging frame.
 
   Reuben Strangelove
@@ -85,11 +85,11 @@ bool uartActive = false;
 
 struct Weather
 {
-  int weatherId;
-  int temperature;
-  int humidity;
-  int pressure;
-  int sum;
+  unsigned int weatherId;
+  unsigned int temperature;
+  unsigned int humidity;
+  unsigned int pressure;
+  unsigned int sum;
 };
 
 Weather weather;
@@ -164,7 +164,6 @@ void setup()
   // Initialize BME280 sensor.
   bmeStatus = bme.begin(BME280_ADDRESS_ALTERNATE);
   //bme.setSampling(bme.MODE_NORMAL, bme.SAMPLING_X4, bme.SAMPLING_X4, bme.SAMPLING_X4, bme.FILTER_OFF, bme.STANDBY_MS_250);
-  
 
   // Initialize LEDs and motor positions.
   LedStartupPattern();
@@ -376,33 +375,216 @@ void CheckLimitSwitches()
   }
 }
 
+// weatherId codes provided by: https://openweathermap.org/weather-conditions
 void UpdateCloudCoverAndPrecipitationLEDs()
 {
 
-static unsigned long oldMillis;
+  /// TEMP
+  weather.weatherId = 200;
 
-//if (millis() > oldMillis + 100)
+  static unsigned long oldMillis;
+  static unsigned long triggerMillis;
+  static unsigned long lightningMillis;
+  const byte maxLEDs = 13;
+  static uint32_t leds[maxLEDs];
+  static uint32_t ledsBackup[maxLEDs];
 
-if (mode == MODE_INSIDE)
-{
- for (int i = 9; i < 3 + 21; i++)
+  unsigned long triggerDelay;
+  byte triggeredLeds;
+  byte lightningIntensity;
+
+  static bool lightningFlashFlag = false;
+
+  // Do not use up too much CPU time processing LEDs.
+  if (millis() < oldMillis + 3)
   {
-    stripText.setPixelColor(i, stripText.Color(0, 0, 0));
+    return;
+  }
+
+  oldMillis = millis();
+
+  // TODO: 511 611 612 613 615 616
+  // 210 211 212
+
+  // Configure precipitation intensity (rain, drizzle, and snow) from weatherId.
+  // Go faster, trigger more leds as intensity increases.
+  switch (weather.weatherId)
+  {
+  case 200:
+  case 230:
+  case 300:
+  case 310:
+  case 500:
+  case 520:
+  case 600:
+  case 620:
+    triggerDelay = 800;
+    triggeredLeds = 1;
+    lightningIntensity = 1;
+    break;
+
+  case 201:
+  case 231:
+  case 301:
+  case 311:
+  case 501:
+  case 521:
+  case 601:
+    triggerDelay = 650;
+    triggeredLeds = 2;
+    lightningIntensity = 4;
+    break;
+
+  case 202:
+  case 232:
+  case 302:
+  case 312:
+  case 313:
+  case 502:
+  case 522:
+  case 531:
+  case 602:
+  case 621:
+    triggerDelay = 400;
+    triggeredLeds = 3;
+    lightningIntensity = maxLEDs;
+    break;
+
+  case 314:
+  case 321:
+  case 503:
+    triggerDelay = 250;
+    triggeredLeds = 4;
+    break;
+
+  case 504:
+  case 622:
+    triggerDelay = 100;
+    triggeredLeds = 5;
+    break;
+  }
+
+  if (mode == MODE_INSIDE)
+  {
+    for (int i = 9; i < 3 + 21; i++)
+    {
+      stripText.setPixelColor(i, stripText.Color(0, 0, 0));
+    }
+  }
+  else if (mode == MODE_OUTSIDE)
+  {
+    // Clear/Cloudy
+    // Cloud cover: 800 = 0%-10%, 801 = 11%-25%, 802 = 25%-50%, 803 = 51%-84%, 804 = 85%-100%
+
+    // Thunderstorm
+    if (weather.weatherId >= 200 && weather.weatherId <= 299)
+    {
+      if (millis() > triggerMillis + triggerDelay)
+      {
+        triggerMillis = millis();
+
+        if (millis() > lightningMillis)
+        {
+          triggerMillis = millis() - triggerDelay + triggerDelay / 10; // Reduce delay for a lightning pop.
+          lightningMillis = millis() + random(500, 1000);
+          lightningFlashFlag = true;
+
+          for (int j = 0; j < maxLEDs; j++)
+          {
+            ledsBackup[j] = leds[j];
+            leds[j] = Color(0, 0, 0);
+          }
+          for (int j = 0; j < lightningIntensity; j++)
+          {
+            byte r;
+            do
+            {
+              r = random(0, maxLEDs);
+            } while (leds[r] != 0);
+            leds[r] = Color(94, 165, 94);
+          }
+        }
+        else
+        {
+          // Restore colors after lightning strike.
+          if (lightningFlashFlag)
+          {
+            lightningFlashFlag = false;
+            for (int j = 0; j < maxLEDs; j++)
+            {
+              leds[j] = ledsBackup[j];
+            }
+          }
+          Precipitation(leds, maxLEDs, triggeredLeds, Color(0, 0, 255));
+        }
+      }
+    }
+    // Rainy
+    else if (weather.weatherId >= 500 && weather.weatherId <= 599)
+    {
+      if (millis() > triggerMillis + triggerDelay)
+      {
+        triggerMillis = millis();
+        Precipitation(leds, maxLEDs, triggeredLeds, Color(0, 0, 255));
+      }
+    }
+    // Snowy
+    else if (weather.weatherId >= 600 && weather.weatherId <= 699)
+    {
+      if (millis() > triggerMillis + triggerDelay)
+      {
+        triggerMillis = millis();
+        Precipitation(leds, maxLEDs, triggeredLeds, Color(94, 165, 94));
+      }
+    }
+    else if (weather.weatherId >= 800 && weather.weatherId <= 804)
+    {
+      byte switchOver;
+      if (weather.weatherId == 800)
+        switchOver = maxLEDs;
+      if (weather.weatherId == 801)
+        switchOver = 1;
+      if (weather.weatherId == 802)
+        switchOver = 3;
+      if (weather.weatherId == 803)
+        switchOver = 7;
+      if (weather.weatherId == 804)
+        switchOver = 11;
+
+      for (int i = 0; i < maxLEDs; i++)
+      {
+        if (i >= switchOver)
+        {
+          leds[i] = Color(127, 127, 0); // Sun
+        }
+        else
+        {
+          leds[i] = Color(94, 165, 94); // Clouds
+        }
+      }
+    }
+
+    // Copy leds data into neopixel strip.
+    for (int i = 9; i < 21; i++)
+    {
+      stripText.setPixelColor(i, leds[i - 9]);
+    }
+  }
+
+  stripText.show();
+}
+
+void Precipitation(uint32_t leds[], byte maxLEDs, byte triggeredLeds, uint32_t color)
+{
+  for (int j = 0; j < maxLEDs; j++)
+  {
+    leds[random(0, maxLEDs)] = Color(0, 0, 0);
+  }
+  for (int j = 0; j < triggeredLeds; j++)
+  {
+    leds[random(0, maxLEDs)] = color;
   }
 }
-else
-{
-  if (weather.weatherId == 
-
-
-
-
-}
-
-stripText.show();
-
-}
-
 
 // Home steppers into known position using limit switches.
 // Phase 1: all three steppers contact limit switches.
@@ -544,7 +726,7 @@ void SetTextColors()
   }
 
   // cloud cover
-  for (int i = 9; i < 3 + 21; i++)
+  for (int i = 9; i < 21; i++)
   {
     stripText.setPixelColor(i, stripText.Color(0, 0, 0));
   }
@@ -564,13 +746,13 @@ void FatalError()
 {
   int brightness = 50;
 
-  for (uint16_t  i = 0; i < stripGauges.numPixels(); i++)
+  for (uint16_t i = 0; i < stripGauges.numPixels(); i++)
   {
     stripGauges.setPixelColor(i, stripGauges.Color(brightness, 0, 0));
     stripGauges.show();
   }
 
-  for (uint16_t  i = 0; i < stripText.numPixels(); i++)
+  for (uint16_t i = 0; i < stripText.numPixels(); i++)
   {
     stripText.setPixelColor(i, stripGauges.Color(brightness, 0, 0));
     stripText.show();
@@ -668,4 +850,10 @@ uint32_t Wheel(byte WheelPos)
   }
   WheelPos -= 170;
   return stripConnectionStatus.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+}
+
+// Pack color data into 32 bit unsigned int (copied from Neopixel library).
+uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
+{
+  return (uint32_t)((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
 }
