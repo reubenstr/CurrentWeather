@@ -377,10 +377,8 @@ void CheckLimitSwitches()
 
 // weatherId codes provided by: https://openweathermap.org/weather-conditions
 void UpdateCloudCoverAndPrecipitationLEDs()
-{
-
-  /// TEMP
-  weather.weatherId = 200;
+{ 
+  weather.weatherId = 700;  // TEMP
 
   static unsigned long oldMillis;
   static unsigned long triggerMillis;
@@ -388,6 +386,7 @@ void UpdateCloudCoverAndPrecipitationLEDs()
   const byte maxLEDs = 13;
   static uint32_t leds[maxLEDs];
   static uint32_t ledsBackup[maxLEDs];
+  bool precipitationFlag;
 
   unsigned long triggerDelay;
   byte triggeredLeds;
@@ -396,7 +395,7 @@ void UpdateCloudCoverAndPrecipitationLEDs()
   static bool lightningFlashFlag = false;
 
   // Do not use up too much CPU time processing LEDs.
-  if (millis() < oldMillis + 3)
+  if (millis() < oldMillis + 10)
   {
     return;
   }
@@ -404,13 +403,14 @@ void UpdateCloudCoverAndPrecipitationLEDs()
   oldMillis = millis();
 
   // TODO: 511 611 612 613 615 616
-  // 210 211 212
+  // TODO: most 700's
 
   // Configure precipitation intensity (rain, drizzle, and snow) from weatherId.
   // Go faster, trigger more leds as intensity increases.
   switch (weather.weatherId)
   {
   case 200:
+  case 210:
   case 230:
   case 300:
   case 310:
@@ -424,6 +424,8 @@ void UpdateCloudCoverAndPrecipitationLEDs()
     break;
 
   case 201:
+  case 211:
+  case 221:
   case 231:
   case 301:
   case 311:
@@ -432,10 +434,11 @@ void UpdateCloudCoverAndPrecipitationLEDs()
   case 601:
     triggerDelay = 650;
     triggeredLeds = 2;
-    lightningIntensity = 4;
+    lightningIntensity = 2;
     break;
 
   case 202:
+  case 212:
   case 232:
   case 302:
   case 312:
@@ -447,7 +450,7 @@ void UpdateCloudCoverAndPrecipitationLEDs()
   case 621:
     triggerDelay = 400;
     triggeredLeds = 3;
-    lightningIntensity = maxLEDs;
+    lightningIntensity = 3;
     break;
 
   case 314:
@@ -462,7 +465,17 @@ void UpdateCloudCoverAndPrecipitationLEDs()
     triggerDelay = 100;
     triggeredLeds = 5;
     break;
+
+  default:
+    // Should not occur.
+    triggerDelay = 20000;
   }
+
+  // Special case where there is weather effects but not precipitation (Thunderstorms).
+  if (weather.weatherId == 210 || weather.weatherId == 211 || weather.weatherId == 212)
+    precipitationFlag = false;
+  else
+    precipitationFlag = true;
 
   if (mode == MODE_INSIDE)
   {
@@ -473,10 +486,7 @@ void UpdateCloudCoverAndPrecipitationLEDs()
   }
   else if (mode == MODE_OUTSIDE)
   {
-    // Clear/Cloudy
-    // Cloud cover: 800 = 0%-10%, 801 = 11%-25%, 802 = 25%-50%, 803 = 51%-84%, 804 = 85%-100%
-
-    // Thunderstorm
+    // Thunderstorm (with rain or without rain).
     if (weather.weatherId >= 200 && weather.weatherId <= 299)
     {
       if (millis() > triggerMillis + triggerDelay)
@@ -486,22 +496,18 @@ void UpdateCloudCoverAndPrecipitationLEDs()
         if (millis() > lightningMillis)
         {
           triggerMillis = millis() - triggerDelay + triggerDelay / 10; // Reduce delay for a lightning pop.
-          lightningMillis = millis() + random(500, 1000);
+          lightningMillis = millis() + random(1500 / (lightningIntensity * 2), 2500 - (lightningIntensity * 250));
           lightningFlashFlag = true;
-
-          for (int j = 0; j < maxLEDs; j++)
+          byte lightningLedsCount;
+          if (lightningIntensity == 1)
+            lightningLedsCount = 1;
+          if (lightningIntensity == 2)
+            lightningLedsCount = 4;
+          if (lightningIntensity == 3)
+            lightningLedsCount = maxLEDs;
+          for (int j = 0; j < lightningLedsCount; j++)
           {
-            ledsBackup[j] = leds[j];
-            leds[j] = Color(0, 0, 0);
-          }
-          for (int j = 0; j < lightningIntensity; j++)
-          {
-            byte r;
-            do
-            {
-              r = random(0, maxLEDs);
-            } while (leds[r] != 0);
-            leds[r] = Color(94, 165, 94);
+            leds[random(0, maxLEDs)] = Color(94, 165, 94);
           }
         }
         else
@@ -512,10 +518,22 @@ void UpdateCloudCoverAndPrecipitationLEDs()
             lightningFlashFlag = false;
             for (int j = 0; j < maxLEDs; j++)
             {
-              leds[j] = ledsBackup[j];
+              if (precipitationFlag)
+              {
+                // Turn non-blue colors (lightning) back to blue.
+                if (leds[j] >> 16 != 0)
+                {
+                  leds[j] = Color(0, 0, 255);
+                }
+              }
+              else
+              {
+                leds[j] = Color(0, 0, 0);
+              }
             }
           }
-          Precipitation(leds, maxLEDs, triggeredLeds, Color(0, 0, 255));
+          if (precipitationFlag)
+            Precipitation(leds, maxLEDs, triggeredLeds, Color(0, 0, 255));
         }
       }
     }
@@ -537,8 +555,60 @@ void UpdateCloudCoverAndPrecipitationLEDs()
         Precipitation(leds, maxLEDs, triggeredLeds, Color(94, 165, 94));
       }
     }
+    // Mist, Fog, Smoke, Sand, Dust, ect.
+    else if (weather.weatherId >= 700 && weather.weatherId <= 775)
+    {
+      static bool toggle;
+      if (millis() > triggerMillis + 750)
+      {
+        triggerMillis = millis();
+        for (int i = 0; i < maxLEDs; i++)
+        {
+          if (toggle)
+          {
+            leds[i] = Color(94, 165, 94);
+          }
+          else
+          {
+            leds[i] = Color(0, 0, 0);
+          }
+          toggle = !toggle;
+        }
+      }
+    }
+    // Tornado
+    else if (weather.weatherId == 781)
+    {
+      static bool toggle;
+      if (millis() > triggerMillis + 350)
+      {
+        triggerMillis = millis();
+
+        if (toggle)
+        {
+          toggle = false;
+        }
+        else
+        {
+          toggle = true;
+        }
+        for (int i = 0; i < maxLEDs; i++)
+        {
+          if (toggle)
+          {
+            leds[i] = Color(255, 0, 0);
+          }
+          else
+          {
+            leds[i] = Color(0, 0, 0);
+          }
+        }
+      }
+    }
+    // Clear/Cloudy
     else if (weather.weatherId >= 800 && weather.weatherId <= 804)
     {
+      // Cloud cover: 800 = 0%-10%, 801 = 11%-25%, 802 = 25%-50%, 803 = 51%-84%, 804 = 85%-100%
       byte switchOver;
       if (weather.weatherId == 800)
         switchOver = maxLEDs;
