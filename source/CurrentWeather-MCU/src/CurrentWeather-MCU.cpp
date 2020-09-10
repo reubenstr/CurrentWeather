@@ -53,7 +53,6 @@ long const STEPPER_MAX_SPEED = 20000;
 long const STEPPER_SPEED = 4000;
 float const STEPPER_STEPS_PER_INCH = 1128.888;
 
-
 float const STEPPER_INCHES_PER_TEMPERATURE_UNIT = 0.107; // Distance between ticks on the gauge display
 float const STEPPER_INCHES_PER_PRESSURE_UNIT = 0.130;    // Distance between ticks on the gauge display
 float const STEPPER_INCHES_PER_HUMITIY_UNIT = 0.130;     // Distance between ticks on the gauge display
@@ -71,19 +70,19 @@ const int SWITCH_LIMIT_ACTIVATED = 0; // Switch toggles high or low (1 or 0)
 const int LED_BRIGHTNESS = 127;
 const int LED_POINTER_BRIGHTNESS = 255;
 const int LED_NUM_LEDS_PER_GAUGE = 20;
+byte ledBrightness = 127;
 
 bool mode;
 const bool MODE_INSIDE = true;
 const bool MODE_OUTSIDE = false;
 
-const int UART_FLUSH_TIMEOUT = 250;         // ms
-const int UART_DISCONNECTED_TIMEOUT = 5000; // ms
-const int UART_EXPECTED_BYTES_PER_DATA_SET = 10;
+const int UART_FLUSH_TIMEOUT = 250;          // ms
+const int UART_DISCONNECTED_TIMEOUT = 30000; // ms
+const int UART_EXPECTED_BYTES_PER_DATA_SET = 11;
 
-byte uartReadData[10];
+byte uartReadData[11];
 int uartReadCount = 0;
 int uartTimeoutCount = 0;
-unsigned int lastUartReadMillis = 0;
 bool uartActive = false;
 
 struct Weather
@@ -105,11 +104,11 @@ enum PrecipitationType
 Weather weather;
 unsigned int const weatherDataUpdateRate = 250; // ms, effects stepper smoothness.
 
-float const temperatureInsideCalibrationOffset = -4.0;  // Degrees F
-float const pressureInsideCalibrationOffset = 0;        // hPA
-float const humidityInsideCalibrationOffset = 7.0;      // Percent
-
+float const temperatureInsideCalibrationOffset = -4.0; // Degrees F
+float const pressureInsideCalibrationOffset = 0;       // hPA
+float const humidityInsideCalibrationOffset = 7.0;     // Percent
 AccelStepper stepperTemperature(AccelStepper::DRIVER, PIN_DRIVER_3_STEP, PIN_DRIVER_3_DIR);
+
 AccelStepper stepperPressure(AccelStepper::DRIVER, PIN_DRIVER_2_STEP, PIN_DRIVER_2_DIR);
 AccelStepper stepperHumidity(AccelStepper::DRIVER, PIN_DRIVER_1_STEP, PIN_DRIVER_1_DIR);
 
@@ -126,87 +125,61 @@ Adafruit_Sensor *bme_pressure = bme.getPressureSensor();
 Adafruit_Sensor *bme_humidity = bme.getHumiditySensor();
 bool bmeStatus;
 
-void setup()
+
+// Input a value 0 to 255 to get a color value (of a pseudo-rainbow).
+// The colours are a transition r - g - b - back to r.
+uint32_t Wheel(byte WheelPos)
 {
-  Serial.begin(115200);
-
-  // Initialize limit switch and toggle switch pins.
-  pinMode(PIN_LIMIT_TEMPERATURE, INPUT);
-  pinMode(PIN_LIMIT_PRESSURE, INPUT);
-  pinMode(PIN_LIMIT_HUMIDITY, INPUT);
-  pinMode(PIN_SWITCH_MODE, INPUT);
-  pinMode(PIN_DRIVER_ENABLE_ALL, OUTPUT);
-  digitalWrite(PIN_LIMIT_TEMPERATURE, HIGH); // turn on pullup resistors
-  digitalWrite(PIN_LIMIT_PRESSURE, HIGH);    // turn on pullup resistors
-  digitalWrite(PIN_LIMIT_HUMIDITY, HIGH);    // turn on pullup resistors
-  digitalWrite(PIN_SWITCH_MODE, HIGH);       // turn on pullup resistors 
-  digitalWrite(PIN_DRIVER_ENABLE_ALL, LOW); // Enable all stepper motor drivers
-
-  // Initialize stepper motors.
-  stepperTemperature.setAcceleration(STEPPER_ACCELERATION);
-  stepperPressure.setAcceleration(STEPPER_ACCELERATION);
-  stepperHumidity.setAcceleration(STEPPER_ACCELERATION);
-  stepperTemperature.setMaxSpeed(STEPPER_MAX_SPEED);
-  stepperPressure.setMaxSpeed(STEPPER_MAX_SPEED);
-  stepperHumidity.setMaxSpeed(STEPPER_MAX_SPEED);
-  stepperTemperature.setSpeed(STEPPER_SPEED);
-  stepperPressure.setSpeed(STEPPER_SPEED);
-  stepperHumidity.setSpeed(STEPPER_SPEED);
-
-  stepperTemperature.setPinsInverted(true, false, false);
-  stepperPressure.setPinsInverted(true, false, false);
-  stepperHumidity.setPinsInverted(true, false, false);
-
-
-  // Initialize WS2812b LED strips.
-  stripTemperature.setBrightness(LED_POINTER_BRIGHTNESS);
-  stripTemperature.begin();
-  stripTemperature.show();
-  stripPressure.setBrightness(LED_POINTER_BRIGHTNESS);
-  stripPressure.begin();
-  stripPressure.show();
-  stripHumidity.setBrightness(LED_POINTER_BRIGHTNESS);
-  stripHumidity.begin();
-  stripHumidity.show();
-  stripGauges.setBrightness(LED_BRIGHTNESS);
-  stripGauges.begin();
-  stripGauges.show();
-  stripText.setBrightness(LED_BRIGHTNESS);
-  stripText.begin();
-  stripText.show();
-  stripConnectionStatus.setBrightness(LED_BRIGHTNESS);
-  stripConnectionStatus.begin();
-  stripConnectionStatus.show();
-
-  // Initialize BME280 sensor.
-  bmeStatus = bme.begin(BME280_ADDRESS_ALTERNATE);
-  //bme.setSampling(bme.MODE_NORMAL, bme.SAMPLING_X4, bme.SAMPLING_X4, bme.SAMPLING_X4, bme.FILTER_OFF, bme.STANDBY_MS_250);
-
-  // Initialize LEDs and motor positions.
-  LedStartupPattern();
-  HomeSteppers();
-  SetTextColors();
-  SetGaugeColors();
+  WheelPos = 255 - WheelPos;
+  if (WheelPos < 85)
+  {
+    return stripConnectionStatus.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+  }
+  if (WheelPos < 170)
+  {
+    WheelPos -= 85;
+    return stripConnectionStatus.Color(0, WheelPos * 3, 255 - WheelPos * 3);
+  }
+  WheelPos -= 170;
+  return stripConnectionStatus.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
 }
 
-// Main execution loop.
-void loop()
+// Pack color data into 32 bit unsigned int (copied from Neopixel library).
+uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
 {
-  CheckModeSwitch();
-  CheckUartForData();
-  UpdateStatusLED();
-  UpdatePointerPositions();
-  UpdatePointerColors();
-  CheckLimitSwitches();
-  UpdateStepperMotors();
-  UpdateCloudCoverAndPrecipitationLEDs(weather.weatherId);
+  return (uint32_t)((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+}
+
+void SetLedBrightness()
+{
+
+  static byte oldLedBrightness = 0;
+
+  if (oldLedBrightness != ledBrightness)
+  {
+    oldLedBrightness = ledBrightness;
+
+    stripTemperature.setBrightness(ledBrightness);
+    stripPressure.setBrightness(ledBrightness);
+    stripHumidity.setBrightness(ledBrightness);
+    stripGauges.setBrightness(ledBrightness);
+    stripText.setBrightness(ledBrightness);
+    stripConnectionStatus.setBrightness(ledBrightness);
+
+    stripTemperature.show();
+    stripPressure.show();
+    stripHumidity.show();
+    stripGauges.show();
+    stripText.show();
+    stripConnectionStatus.show();
+  }
 }
 
 // Step motors (if needed) (does not use acceleration).
 void UpdateStepperMotors()
 {
 
-   stepperTemperature.setSpeed(STEPPER_SPEED);
+  stepperTemperature.setSpeed(STEPPER_SPEED);
   stepperPressure.setSpeed(STEPPER_SPEED);
   stepperHumidity.setSpeed(STEPPER_SPEED);
 
@@ -223,38 +196,37 @@ void UpdatePointerPositions()
   float pressureData;
   float humidityData;
 
-   // Add delay due to execution overhead to prevent stepper motor slow down.   
-   if (millis() < oldMillis + weatherDataUpdateRate)
-    {      
-      return;       
-    }
-    oldMillis = millis();
+  // Add delay due to execution overhead to prevent stepper motor slow down.
+  if (millis() < oldMillis + weatherDataUpdateRate)
+  {
+    return;
+  }
+  oldMillis = millis();
 
   // Select weather data source: inside or outside (sensor or ESP via UART)
   if (mode == MODE_INSIDE)
   {
-      // Acquire data from BME280 sensor (per Adafruit example sketch).
-      sensors_event_t temp_event, pressure_event, humidity_event;
-      bme_temp->getEvent(&temp_event);
-      bme_pressure->getEvent(&pressure_event);
-      bme_humidity->getEvent(&humidity_event);
+    // Acquire data from BME280 sensor (per Adafruit example sketch).
+    sensors_event_t temp_event, pressure_event, humidity_event;
+    bme_temp->getEvent(&temp_event);
+    bme_pressure->getEvent(&pressure_event);
+    bme_humidity->getEvent(&humidity_event);
 
-      temperatureData = round((temp_event.temperature * 9.0 / 5.0) + 32.0 + temperatureInsideCalibrationOffset); // Convert C to F
-      pressureData = round(pressure_event.pressure + pressureInsideCalibrationOffset);
-      humidityData = round(humidity_event.relative_humidity + humidityInsideCalibrationOffset);
-    
+    temperatureData = round((temp_event.temperature * 9.0 / 5.0) + 32.0 + temperatureInsideCalibrationOffset); // Convert C to F
+    pressureData = round(pressure_event.pressure + pressureInsideCalibrationOffset);
+    humidityData = round(humidity_event.relative_humidity + humidityInsideCalibrationOffset);
   }
   else if (mode == MODE_OUTSIDE)
   {
     // Data from ESP (via UART).
     temperatureData = weather.temperature;
     pressureData = weather.pressure;
-    humidityData = weather.humidity;    
+    humidityData = weather.humidity;
   }
 
   // Convert temperature to position (add 10 degrees offset to scale temperature out of negative values).
   float positionTemperature = (temperatureData + 10) * STEPPER_STEPS_PER_INCH * STEPPER_INCHES_PER_TEMPERATURE_UNIT;
-   if (positionTemperature < 0)
+  if (positionTemperature < 0)
   {
     positionTemperature = 0;
   }
@@ -266,7 +238,7 @@ void UpdatePointerPositions()
 
   // Convert pressure to position (subtrace 950 units to scale into gauge and stepper space).
   float positionPressure = (pressureData - 950) * STEPPER_STEPS_PER_INCH * STEPPER_INCHES_PER_PRESSURE_UNIT;
-   if (positionPressure < 0)
+  if (positionPressure < 0)
   {
     positionPressure = 0;
   }
@@ -278,7 +250,7 @@ void UpdatePointerPositions()
 
   // Convert humidity to position.
   float positionHumdity = (humidityData)*STEPPER_STEPS_PER_INCH * STEPPER_INCHES_PER_HUMITIY_UNIT;
-   if (positionHumdity < 0)
+  if (positionHumdity < 0)
   {
     positionHumdity = 0;
   }
@@ -326,10 +298,11 @@ void UpdatePointerColors()
 }
 
 // Check for UART data.
-// Manual timeout for fragment flushing as data is expected every 2000ms.
+// Manual timeout for fragment flushing as data is expected every Xms.
 void CheckUartForData()
 {
   static unsigned long oldMillis = 0;
+  static unsigned long lastUartReadMillis = 0;
 
   // Check packet timeout.
   if (millis() > (oldMillis + UART_FLUSH_TIMEOUT))
@@ -345,7 +318,7 @@ void CheckUartForData()
   }
 
   // Check for available data.
-  if (Serial.available())
+  while (Serial.available())
   {
     // Reset timeout.
     oldMillis = millis();
@@ -370,42 +343,51 @@ void CheckUartForData()
       weatherTemp.temperature = uartReadData[2] + (uartReadData[3] << 8);
       weatherTemp.humidity = uartReadData[4] + (uartReadData[5] << 8);
       weatherTemp.pressure = uartReadData[6] + (uartReadData[7] << 8);
-      weatherTemp.sum = uartReadData[8] + (uartReadData[9] << 8);
+      byte ledBrightnessTemp = uartReadData[8];
+      weatherTemp.sum = uartReadData[9] + (uartReadData[10] << 8);
 
-      // Check checksum.
-      if (weatherTemp.sum != weatherTemp.weatherId + weatherTemp.temperature + weatherTemp.humidity + weatherTemp.pressure)
+      // If checksum is valid then store the data.
+      if (weatherTemp.sum == (weatherTemp.weatherId + weatherTemp.temperature + weatherTemp.humidity + weatherTemp.pressure + ledBrightnessTemp))
       {
-        return;
+        uartActive = true;
+        weather = weatherTemp;
+        ledBrightness = ledBrightnessTemp;
       }
-
-      uartActive = true;
-
-      weather = weatherTemp;
     }
   }
 }
 
-// Check if the mode switch has toggled.
-void CheckModeSwitch()
+void Precipitation(uint32_t leds[], byte maxLEDs, byte triggeredLeds, PrecipitationType type)
 {
-  if (digitalRead(PIN_SWITCH_MODE) != mode)
+  for (int j = 0; j < maxLEDs; j++)
   {
-    mode = digitalRead(PIN_SWITCH_MODE);
-    SetInsideOutsideLedColors();
+    leds[random(0, maxLEDs)] = Color(0, 0, 0);
+  }
+  for (int j = 0; j < triggeredLeds; j++)
+  {
+    if (type == Rain)
+    {
+      leds[random(0, maxLEDs)] = Color(0, 0, 255);
+    }
+    else if (type == Snow)
+    {
+      leds[random(0, maxLEDs)] = Color(94, 165, 94);
+    }
+    else if (type == RainSnowMix)
+    {
+      if (random(0, 2))
+      {
+        leds[random(0, maxLEDs)] = Color(0, 0, 255);
+      }
+      else
+      {
+        leds[random(0, maxLEDs)] = Color(94, 165, 94);
+      }
+    }
   }
 }
 
-// Check if any of the steppers triggered a limit switch.
-void CheckLimitSwitches()
-{
-  // TODO: check if limits are repeatively triggered as that indicates a mechanical failure.
-  if (digitalRead(PIN_LIMIT_TEMPERATURE) == SWITCH_LIMIT_ACTIVATED ||
-      digitalRead(PIN_LIMIT_PRESSURE) == SWITCH_LIMIT_ACTIVATED ||
-      digitalRead(PIN_LIMIT_HUMIDITY) == SWITCH_LIMIT_ACTIVATED)
-  {
-    HomeSteppers();
-  }
-}
+
 
 // weatherId codes provided by: https://openweathermap.org/weather-conditions
 void UpdateCloudCoverAndPrecipitationLEDs(unsigned int weatherId)
@@ -683,35 +665,6 @@ void UpdateCloudCoverAndPrecipitationLEDs(unsigned int weatherId)
   stripText.show();
 }
 
-void Precipitation(uint32_t leds[], byte maxLEDs, byte triggeredLeds, PrecipitationType type)
-{
-  for (int j = 0; j < maxLEDs; j++)
-  {
-    leds[random(0, maxLEDs)] = Color(0, 0, 0);
-  }
-  for (int j = 0; j < triggeredLeds; j++)
-  {
-    if (type == Rain)
-    {
-      leds[random(0, maxLEDs)] = Color(0, 0, 255);
-    }
-    else if (type == Snow)
-    {
-      leds[random(0, maxLEDs)] = Color(94, 165, 94);
-    }
-    else if (type == RainSnowMix)
-    {
-      if (random(0, 2))
-      {
-        leds[random(0, maxLEDs)] = Color(0, 0, 255);
-      }
-      else
-      {
-        leds[random(0, maxLEDs)] = Color(94, 165, 94);
-      }
-    }
-  }
-}
 
 // Cycle through weather effects for demonstration and calibration.
 void DemoCloudCoverAndPrecipitation()
@@ -860,6 +813,37 @@ void UpdateStatusLED()
   stripConnectionStatus.show();
 }
 
+void SetInsideOutsideLedColors()
+{
+  if (mode == MODE_INSIDE)
+  {
+    // inside
+    for (int i = 21; i < 26; i++)
+    {
+      stripText.setPixelColor(i, stripText.Color(0, 75, 127));
+    }
+    // outside
+    for (int i = 26; i < 31; i++)
+    {
+      stripText.setPixelColor(i, stripText.Color(0, 0, 0));
+    }
+  }
+  else
+  {
+    // outside
+    for (int i = 21; i < 26; i++)
+    {
+      stripText.setPixelColor(i, stripText.Color(0, 0, 0));
+    }
+    for (int i = 26; i < 31; i++)
+    {
+      stripText.setPixelColor(i, stripText.Color(0, 75, 127));
+    }
+  }
+
+  stripText.show();
+}
+
 void SetTextColors()
 {
   // Text pattern LED order (43 total)
@@ -933,36 +917,7 @@ void FatalError()
     ; // Halt program.
 }
 
-void SetInsideOutsideLedColors()
-{
-  if (mode == MODE_INSIDE)
-  {
-    // inside
-    for (int i = 21; i < 26; i++)
-    {
-      stripText.setPixelColor(i, stripText.Color(0, 75, 127));
-    }
-    // outside
-    for (int i = 26; i < 31; i++)
-    {
-      stripText.setPixelColor(i, stripText.Color(0, 0, 0));
-    }
-  }
-  else
-  {
-    // outside
-    for (int i = 21; i < 26; i++)
-    {
-      stripText.setPixelColor(i, stripText.Color(0, 0, 0));
-    }
-    for (int i = 26; i < 31; i++)
-    {
-      stripText.setPixelColor(i, stripText.Color(0, 75, 127));
-    }
-  }
 
-  stripText.show();
-}
 
 void SetGaugeColors()
 {
@@ -996,26 +951,108 @@ void LedStartupPattern()
   }
 }
 
-// Input a value 0 to 255 to get a color value (of a pseudo-rainbow).
-// The colours are a transition r - g - b - back to r.
-uint32_t Wheel(byte WheelPos)
+// Check if the mode switch has toggled.
+void CheckModeSwitch()
 {
-  WheelPos = 255 - WheelPos;
-  if (WheelPos < 85)
+  if (digitalRead(PIN_SWITCH_MODE) != mode)
   {
-    return stripConnectionStatus.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+    mode = digitalRead(PIN_SWITCH_MODE);
+    SetInsideOutsideLedColors();
   }
-  if (WheelPos < 170)
-  {
-    WheelPos -= 85;
-    return stripConnectionStatus.Color(0, WheelPos * 3, 255 - WheelPos * 3);
-  }
-  WheelPos -= 170;
-  return stripConnectionStatus.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
 }
 
-// Pack color data into 32 bit unsigned int (copied from Neopixel library).
-uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
+// Check if any of the steppers triggered a limit switch.
+void CheckLimitSwitches()
 {
-  return (uint32_t)((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+  // TODO: check if limits are repeatively triggered as that indicates a mechanical failure.
+  if (digitalRead(PIN_LIMIT_TEMPERATURE) == SWITCH_LIMIT_ACTIVATED ||
+      digitalRead(PIN_LIMIT_PRESSURE) == SWITCH_LIMIT_ACTIVATED ||
+      digitalRead(PIN_LIMIT_HUMIDITY) == SWITCH_LIMIT_ACTIVATED)
+  {
+    HomeSteppers();
+  }
+}
+
+void setup()
+{
+  Serial.begin(115200);
+
+  // Initialize limit switch and toggle switch pins.
+  pinMode(PIN_LIMIT_TEMPERATURE, INPUT);
+  pinMode(PIN_LIMIT_PRESSURE, INPUT);
+  pinMode(PIN_LIMIT_HUMIDITY, INPUT);
+  pinMode(PIN_SWITCH_MODE, INPUT);
+  pinMode(PIN_DRIVER_ENABLE_ALL, OUTPUT);
+  digitalWrite(PIN_LIMIT_TEMPERATURE, HIGH); // turn on pullup resistors
+  digitalWrite(PIN_LIMIT_PRESSURE, HIGH);    // turn on pullup resistors
+  digitalWrite(PIN_LIMIT_HUMIDITY, HIGH);    // turn on pullup resistors
+  digitalWrite(PIN_SWITCH_MODE, HIGH);       // turn on pullup resistors
+  digitalWrite(PIN_DRIVER_ENABLE_ALL, LOW);  // Enable all stepper motor drivers
+
+  // Initialize stepper motors.
+  stepperTemperature.setAcceleration(STEPPER_ACCELERATION);
+  stepperPressure.setAcceleration(STEPPER_ACCELERATION);
+  stepperHumidity.setAcceleration(STEPPER_ACCELERATION);
+  stepperTemperature.setMaxSpeed(STEPPER_MAX_SPEED);
+  stepperPressure.setMaxSpeed(STEPPER_MAX_SPEED);
+  stepperHumidity.setMaxSpeed(STEPPER_MAX_SPEED);
+  stepperTemperature.setSpeed(STEPPER_SPEED);
+  stepperPressure.setSpeed(STEPPER_SPEED);
+  stepperHumidity.setSpeed(STEPPER_SPEED);
+
+  stepperTemperature.setPinsInverted(true, false, false);
+  stepperPressure.setPinsInverted(true, false, false);
+  stepperHumidity.setPinsInverted(true, false, false);
+
+  // Initialize WS2812b LED strips.
+  stripTemperature.setBrightness(LED_POINTER_BRIGHTNESS);
+  stripTemperature.begin();
+  stripTemperature.show();
+  stripPressure.setBrightness(LED_POINTER_BRIGHTNESS);
+  stripPressure.begin();
+  stripPressure.show();
+  stripHumidity.setBrightness(LED_POINTER_BRIGHTNESS);
+  stripHumidity.begin();
+  stripHumidity.show();
+  stripGauges.setBrightness(LED_BRIGHTNESS);
+  stripGauges.begin();
+  stripGauges.show();
+  stripText.setBrightness(LED_BRIGHTNESS);
+  stripText.begin();
+  stripText.show();
+  stripConnectionStatus.setBrightness(LED_BRIGHTNESS);
+  stripConnectionStatus.begin();
+  stripConnectionStatus.show();
+
+  // Initialize BME280 sensor.
+  bmeStatus = bme.begin(BME280_ADDRESS_ALTERNATE);
+  //bme.setSampling(bme.MODE_NORMAL, bme.SAMPLING_X4, bme.SAMPLING_X4, bme.SAMPLING_X4, bme.FILTER_OFF, bme.STANDBY_MS_250);
+
+  // Initialize LEDs and motor positions.
+  LedStartupPattern();
+  HomeSteppers();
+  SetTextColors();
+  SetGaugeColors();
+}
+
+// Main execution loop.
+void loop()
+{
+  CheckModeSwitch();
+
+  CheckUartForData();
+
+  UpdateStatusLED();
+
+  UpdatePointerPositions();
+
+  UpdatePointerColors();
+
+  CheckLimitSwitches();
+
+  UpdateStepperMotors();
+
+  UpdateCloudCoverAndPrecipitationLEDs(weather.weatherId);
+
+  SetLedBrightness();
 }

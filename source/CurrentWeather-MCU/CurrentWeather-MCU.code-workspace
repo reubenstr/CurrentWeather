@@ -2,6 +2,14 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"name": "MelodicChimes",
+			"path": "C:\\Users\\Dr. Zoidburg\\Desktop\\Projects\\MelodicChimes\\source\\MelodicChimes"
+		},
+		{
+			"name": "InfraredMirror",
+			"path": "C:\\Users\\Dr. Zoidburg\\Desktop\\Projects\\InfraredMirror\\InfraredMirror"
 		}
 	],
 	"settings": {}
