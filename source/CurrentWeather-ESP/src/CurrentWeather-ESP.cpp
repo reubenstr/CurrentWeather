@@ -19,6 +19,7 @@
 #include <ESP8266WiFi.h> //https://github.com/esp8266/Arduino
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
+#include<LittleFS.h>
 
 #include <WiFiManager.h> //https://github.com/tzapu/WiFiManager
 // https://github.com/tzapu/WiFiManager/tree/master/examples/AutoConnectWithFSParameters
@@ -112,7 +113,7 @@ bool GetWeather()
     data[4] = humidity & 0xFF;
     data[5] = humidity >> 8;
     data[6] = pressure & 0xFF;
-    data[7] = pressure >> 8;
+    data[7] = pressure >> 8;                                         
     data[8] = brightnessValue;
     data[9] = sum & 0xFF;
     data[10] = sum >> 8;
@@ -132,15 +133,15 @@ void BeginSpiffs()
 {
   Serial.println("Mounting FS...");
 
-  if (SPIFFS.begin())
+  if (LittleFS.begin())
   {
-    Serial.println("mounted file system");
+    Serial.println("Mounted file system.");
 
-    if (SPIFFS.exists("/config.json"))
+    if (LittleFS.exists("/config.json"))
     {
       //file exists, reading and loading
       Serial.println("Reading config file...");
-      File configFile = SPIFFS.open("/config.json", "r");
+      File configFile = LittleFS.open("/config.json", "r");
       if (configFile)
       {
         Serial.println("Opened config file.");
@@ -172,6 +173,7 @@ void BeginSpiffs()
   else
   {
     Serial.println("Failed to mount FS.");
+    LittleFS.format();
   }
 }
 
@@ -185,7 +187,7 @@ void saveConfigCallback()
   json["key"] = key;
   json["brightness"] = brightness;
 
-  File configFile = SPIFFS.open("/config.json", "w");
+  File configFile = LittleFS.open("/config.json", "w");
   if (!configFile)
   {
     Serial.println("Failed to open config file for writing.");
